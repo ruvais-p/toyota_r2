@@ -1,0 +1,40 @@
+# Local infrastructure for the payroll pipeline.
+# Start with: docker compose up -d
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: payroll-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: payroll
+      MYSQL_USER: payroll
+      MYSQL_PASSWORD: payroll
+    ports:
+      - "3306:3306"
+    volumes:
+      - payroll-mysql-data:/var/lib/mysql
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-ppayroll", "-upayroll"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: payroll-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - payroll-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  payroll-mysql-data:
+  payroll-redis-data:
