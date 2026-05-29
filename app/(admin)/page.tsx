@@ -91,12 +91,18 @@ export default async function DashboardPage() {
         {metrics.map((m) => {
           const Icon = m.icon;
           return (
-            <Link key={m.label} href={m.href}>
-              <Card className="hover:border-primary/40 h-full transition-colors">
-                <CardContent className="flex flex-col gap-2">
-                  <Icon className="text-muted-foreground size-5" />
-                  <div className="text-2xl font-semibold">{m.value}</div>
-                  <div className="text-muted-foreground text-xs">{m.label}</div>
+            <Link key={m.label} href={m.href} className="group">
+              <Card className="h-full transition-all group-hover:-translate-y-0.5 group-hover:border-primary/40 group-hover:shadow-md">
+                <CardContent className="flex flex-col gap-3">
+                  <div className="bg-primary/10 text-primary flex size-9 items-center justify-center rounded-lg">
+                    <Icon className="size-4.5" />
+                  </div>
+                  <div>
+                    <div className="text-2xl font-semibold tabular-nums tracking-tight">
+                      {m.value}
+                    </div>
+                    <div className="text-muted-foreground text-xs">{m.label}</div>
+                  </div>
                 </CardContent>
               </Card>
             </Link>

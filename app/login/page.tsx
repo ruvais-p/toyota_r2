@@ -8,7 +8,8 @@ export default async function LoginPage() {
     redirect("/");
   }
   return (
-    <main className="flex min-h-svh items-center justify-center p-6">
+    <main className="from-muted/40 via-background to-background relative flex min-h-svh items-center justify-center bg-gradient-to-b p-6">
+      <div className="bg-primary/5 pointer-events-none absolute inset-x-0 top-0 h-64 [mask-image:radial-gradient(ellipse_at_top,black,transparent_70%)]" />
       <LoginForm companyName={env.companyName} />
     </main>
   );

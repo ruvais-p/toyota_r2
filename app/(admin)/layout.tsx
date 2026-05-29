@@ -9,11 +9,13 @@ export default async function AdminLayout({
 }) {
   await requireSession();
   return (
-    <div className="flex min-h-svh flex-col">
+    <div className="min-h-svh">
       <AdminNav companyName={env.companyName} />
-      <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:px-6 sm:py-8">
-        {children}
-      </main>
+      <div className="lg:pl-64">
+        <main className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
+          {children}
+        </main>
+      </div>
     </div>
   );
 }

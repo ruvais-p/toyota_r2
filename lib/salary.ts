@@ -67,3 +67,67 @@ export function formatMonthYear(monthYear: string): string {
   const date = new Date(Number(year), Number(month) - 1, 1);
   return date.toLocaleDateString("en-US", { month: "long", year: "numeric" });
 }
+
+/** "2026-05-29" -> "29 May 2026". Returns the input unchanged if not parseable. */
+export function formatLongDate(iso: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  if (!match) return iso;
+  const [, year, month, day] = match;
+  const date = new Date(Number(year), Number(month) - 1, Number(day));
+  return date.toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+  });
+}
+
+const ONES = [
+  "", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine",
+  "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen",
+  "Seventeen", "Eighteen", "Nineteen",
+];
+const TENS = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
+
+function twoDigitWords(n: number): string {
+  if (n < 20) return ONES[n];
+  const tens = Math.floor(n / 10);
+  const ones = n % 10;
+  return TENS[tens] + (ones ? ` ${ONES[ones]}` : "");
+}
+
+function threeDigitWords(n: number): string {
+  const hundreds = Math.floor(n / 100);
+  const rest = n % 100;
+  const parts: string[] = [];
+  if (hundreds) parts.push(`${ONES[hundreds]} Hundred`);
+  if (rest) parts.push(twoDigitWords(rest));
+  return parts.join(" ");
+}
+
+/** Whole number to words using the Indian numbering system (Lakh/Crore). */
+function integerToWords(value: number): string {
+  if (value === 0) return "Zero";
+  let n = value;
+  const crore = Math.floor(n / 10000000);
+  n %= 10000000;
+  const lakh = Math.floor(n / 100000);
+  n %= 100000;
+  const thousand = Math.floor(n / 1000);
+  n %= 1000;
+  const parts: string[] = [];
+  if (crore) parts.push(`${integerToWords(crore)} Crore`);
+  if (lakh) parts.push(`${twoDigitWords(lakh)} Lakh`);
+  if (thousand) parts.push(`${twoDigitWords(thousand)} Thousand`);
+  if (n) parts.push(threeDigitWords(n));
+  return parts.join(" ");
+}
+
+/** "57000.5" -> "Fifty Seven Thousand Rupees and Fifty Paise Only". */
+export function amountInWordsINR(amount: number): string {
+  const safe = Math.max(0, amount);
+  const rupees = Math.floor(safe);
+  const paise = Math.round((safe - rupees) * 100);
+  const rupeeWords = `${integerToWords(rupees)} Rupee${rupees === 1 ? "" : "s"}`;
+  const paiseWords = paise ? ` and ${twoDigitWords(paise)} Paise` : "";
+  return `${rupeeWords}${paiseWords} Only`;
+}
