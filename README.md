@@ -1,4 +1,4 @@
-# Nippon Toyota — Payroll Portal
+# Nippon Toyota | Payroll Portal
 
 > Automated, password‑protected salary‑slip generation and email delivery.
 
