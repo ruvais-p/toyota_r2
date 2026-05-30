@@ -19,6 +19,9 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Payroll Portal",
   description: "Upload payroll sheets and dispatch salary slips by email.",
+  icons: {
+    icon: "/images.jpeg",
+  },
 };
 
 export default function RootLayout({
