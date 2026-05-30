@@ -43,15 +43,50 @@ function resolveLocalChrome(): string | null {
   return CHROME_CANDIDATES.find((p) => fs.existsSync(p)) ?? null;
 }
 
-const globalForBrowser = globalThis as unknown as { __pdfBrowser?: Browser };
+const globalForBrowser = globalThis as unknown as {
+  __pdfBrowser?: Browser;
+  __pdfLaunching?: Promise<Browser>;
+};
 
 /** Launch (once) and reuse a headless browser instance. */
 async function getBrowser(): Promise<Browser> {
   const existing = globalForBrowser.__pdfBrowser;
   if (existing && existing.connected) return existing;
-  const browser = await launchBrowser();
-  globalForBrowser.__pdfBrowser = browser;
-  return browser;
+  // Dedupe concurrent launches: all callers share one in-flight launch so the
+  // serverless Chromium binary is only decompressed + spawned once. Two parallel
+  // launches racing on the same /tmp binary is the classic ETXTBSY trigger.
+  if (!globalForBrowser.__pdfLaunching) {
+    globalForBrowser.__pdfLaunching = launchBrowserWithRetry()
+      .then((browser) => {
+        globalForBrowser.__pdfBrowser = browser;
+        return browser;
+      })
+      .finally(() => {
+        globalForBrowser.__pdfLaunching = undefined;
+      });
+  }
+  return globalForBrowser.__pdfLaunching;
+}
+
+/**
+ * Launch with automatic retries on ETXTBSY ("text file busy"). The freshly
+ * decompressed Chromium binary can still be held open for writing when we try to
+ * spawn it; a short wait and another attempt clears it.
+ */
+async function launchBrowserWithRetry(attempts = 3): Promise<Browser> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await launchBrowser();
+    } catch (err) {
+      const code = (err as { code?: string } | null)?.code;
+      const transient = code === "ETXTBSY" || code === "EBUSY";
+      if (!transient || attempt >= attempts) throw err;
+      console.warn(
+        `[pdf] browser launch failed (${code}), retrying ${attempt}/${attempts - 1}`
+      );
+      await new Promise((r) => setTimeout(r, 300 * attempt));
+    }
+  }
 }
 
 /**
