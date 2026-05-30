@@ -26,19 +26,15 @@ export const dynamic = "force-dynamic";
 async function getHealth() {
   const health = {
     db: false,
-    redis: false,
+    queue: false,
     smtp: Boolean(env.smtp.host && env.smtp.user),
   };
   try {
     await countEmployees();
     health.db = true;
   } catch {}
-  try {
-    const client = (await getSalaryQueue().client) as unknown as {
-      ping(): Promise<string>;
-    };
-    health.redis = (await client.ping()) === "PONG";
-  } catch {}
+  // In-process queue: available whenever the server is running.
+  health.queue = Boolean(getSalaryQueue());
   return health;
 }
 
@@ -167,8 +163,8 @@ export default async function DashboardPage() {
             <CardDescription>Required background services.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            <StatusRow ok={health.db} label="MySQL database" />
-            <StatusRow ok={health.redis} label="Redis (queue)" />
+            <StatusRow ok={health.db} label="Supabase (Postgres)" />
+            <StatusRow ok={health.queue} label="Email queue (in-process)" />
             <StatusRow
               ok={health.smtp}
               label="SMTP configured"

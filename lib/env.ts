@@ -18,17 +18,13 @@ function required(name: string): string {
 }
 
 export const env = {
-  get db() {
-    return {
-      host: process.env.DATABASE_HOST ?? "127.0.0.1",
-      port: Number(process.env.DATABASE_PORT ?? 3306),
-      user: process.env.DATABASE_USER ?? "payroll",
-      password: process.env.DATABASE_PASSWORD ?? "payroll",
-      database: process.env.DATABASE_NAME ?? "payroll",
-    };
+  get supabaseUrl() {
+    // Project URL, e.g. https://<ref>.supabase.co
+    return required("SUPABASE_URL");
   },
-  get redisUrl() {
-    return process.env.REDIS_URL ?? "redis://127.0.0.1:6379";
+  get supabaseServiceRoleKey() {
+    // Server-only key (bypasses RLS). Never expose to the browser.
+    return required("SUPABASE_SERVICE_ROLE_KEY");
   },
   get adminPassword() {
     return required("ADMIN_PASSWORD");

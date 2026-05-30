@@ -1,0 +1,50 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+# Provisions: a single web service. Salary-slip emails are processed by an
+# in-process queue inside the web server (no Redis, no separate worker).
+# The database is Supabase (hosted Postgres) via the Supabase REST client.
+
+services:
+  # ---- Next.js web app (also runs the in-process email queue) -------------
+  - type: web
+    name: nippon-toyota-web
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    healthCheckPath: /
+    autoDeploy: true
+    envVars:
+      - fromGroup: payroll-shared
+
+# Shared secrets/config. Values marked `sync: false` must be filled in the
+# Render dashboard (they are NOT committed here).
+envVarGroups:
+  - name: payroll-shared
+    envVars:
+      # Runtime DB access: Supabase REST (PostgREST over HTTPS, IPv4-friendly).
+      - key: SUPABASE_URL
+        sync: false          # https://<ref>.supabase.co
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false          # server-only, bypasses RLS — never expose
+      # Optional: only for db/schema.sql migrations (use the Session pooler URI).
+      - key: DATABASE_URL
+        sync: false          # Supabase "Session pooler" connection string
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_SECURE
+        value: "false"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+      - key: COMPANY_NAME
+        value: "Nippon Toyota"
+      - key: WORKER_CONCURRENCY
+        value: "3"

@@ -1,5 +1,19 @@
-import { getPool, query, execute, type RowDataPacket } from "./db";
-import type { Employee, SlipWithEmployee, EmailStatus } from "./types";
+import { getSupabase } from "./supabase";
+import type { Employee, SalarySlip, SlipWithEmployee, EmailStatus } from "./types";
+
+/**
+ * Data access via the Supabase JS client (PostgREST over HTTPS), not raw pg.
+ * Function signatures are unchanged so every caller (route handlers, pages, and
+ * the BullMQ worker via process-slip) keeps working as-is.
+ *
+ * Notes on the PostgREST translation:
+ *   - ON CONFLICT ... DO UPDATE  ->  .upsert(values, { onConflict })
+ *   - JOIN employees             ->  embedded select "*, employees(...)" (FK-backed)
+ *   - GROUP BY                    ->  not supported; use head:true count queries
+ *   - ORDER BY a joined column    ->  not supported on parent rows; sort in JS
+ */
+
+const EMP_COLS = "employee_id, name, email, designation, dob";
 
 // ---------------------------------------------------------------------------
 // Employees
@@ -16,31 +30,20 @@ interface EmployeeInput {
 /** Bulk insert/update employees keyed by employee_id. Returns the row count. */
 export async function upsertEmployees(rows: EmployeeInput[]): Promise<number> {
   if (rows.length === 0) return 0;
-  const values = rows.map((r) => [
-    r.employee_id,
-    r.name,
-    r.email,
-    r.designation,
-    r.dob,
-  ]);
-  const sql = `
-    INSERT INTO employees (employee_id, name, email, designation, dob)
-    VALUES ?
-    ON DUPLICATE KEY UPDATE
-      name = VALUES(name),
-      email = VALUES(email),
-      designation = VALUES(designation),
-      dob = VALUES(dob)`;
-  const [result] = await getPool().query(sql, [values]);
-  // affectedRows counts 1 per insert, 2 per update.
-  return (result as { affectedRows: number }).affectedRows;
+  const { error, count } = await getSupabase()
+    .from("employees")
+    .upsert(rows, { onConflict: "employee_id", count: "exact" });
+  if (error) throw new Error(error.message);
+  return count ?? rows.length;
 }
 
 export async function listEmployees(): Promise<Employee[]> {
-  return query<Employee & RowDataPacket>(
-    `SELECT employee_id, name, email, designation, dob
-     FROM employees ORDER BY name ASC`
-  );
+  const { data, error } = await getSupabase()
+    .from("employees")
+    .select(EMP_COLS)
+    .order("name", { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as Employee[];
 }
 
 export async function getEmployeesByIds(
@@ -48,21 +51,21 @@ export async function getEmployeesByIds(
 ): Promise<Map<string, Employee>> {
   const map = new Map<string, Employee>();
   if (ids.length === 0) return map;
-  const placeholders = ids.map(() => "?").join(",");
-  const rows = await query<Employee & RowDataPacket>(
-    `SELECT employee_id, name, email, designation, dob
-     FROM employees WHERE employee_id IN (${placeholders})`,
-    ids
-  );
-  for (const row of rows) map.set(row.employee_id, row);
+  const { data, error } = await getSupabase()
+    .from("employees")
+    .select(EMP_COLS)
+    .in("employee_id", ids);
+  if (error) throw new Error(error.message);
+  for (const row of (data ?? []) as Employee[]) map.set(row.employee_id, row);
   return map;
 }
 
 export async function countEmployees(): Promise<number> {
-  const rows = await query<RowDataPacket & { c: number }>(
-    `SELECT COUNT(*) AS c FROM employees`
-  );
-  return rows[0]?.c ?? 0;
+  const { count, error } = await getSupabase()
+    .from("employees")
+    .select("*", { count: "exact", head: true });
+  if (error) throw new Error(error.message);
+  return count ?? 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -79,68 +82,99 @@ interface SlipInput {
   net_salary: number;
 }
 
+/** Shape returned by PostgREST when embedding the employee into a slip row. */
+type SlipJoinRow = SalarySlip & {
+  employees: {
+    name: string;
+    email: string;
+    designation: string;
+    dob?: string | null;
+  } | null;
+};
+
+/** Flatten an embedded {slip, employees:{...}} row into the flat SlipWithEmployee. */
+function flattenSlip(row: SlipJoinRow): SlipWithEmployee {
+  const { employees, ...slip } = row;
+  return {
+    ...slip,
+    name: employees?.name ?? "",
+    email: employees?.email ?? "",
+    designation: employees?.designation ?? "",
+    dob: employees?.dob ?? null,
+  };
+}
+
 /**
  * Insert a slip, or replace an existing one for the same (employee, month).
  * Resets email status to 'pending' so it can be (re)dispatched. Returns the id.
  */
 export async function upsertSlip(slip: SlipInput): Promise<number> {
-  const sql = `
-    INSERT INTO salary_slips
-      (employee_id, month_year, base_salary, hra, allowances, deductions, net_salary, email_status, email_error, sent_at, job_id)
-    VALUES
-      (:employee_id, :month_year, :base_salary, :hra, :allowances, :deductions, :net_salary, 'pending', NULL, NULL, NULL)
-    ON DUPLICATE KEY UPDATE
-      id = LAST_INSERT_ID(id),
-      base_salary = VALUES(base_salary),
-      hra = VALUES(hra),
-      allowances = VALUES(allowances),
-      deductions = VALUES(deductions),
-      net_salary = VALUES(net_salary),
-      email_status = 'pending',
-      email_error = NULL,
-      sent_at = NULL,
-      job_id = NULL`;
-  const result = await execute(sql, { ...slip });
-  return result.insertId;
+  const { data, error } = await getSupabase()
+    .from("salary_slips")
+    .upsert(
+      {
+        ...slip,
+        email_status: "pending",
+        email_error: null,
+        sent_at: null,
+        job_id: null,
+      },
+      { onConflict: "employee_id,month_year" }
+    )
+    .select("id")
+    .single();
+  if (error) throw new Error(error.message);
+  return (data as { id: number }).id;
 }
 
 export async function getSlipWithEmployee(
   slipId: number
 ): Promise<SlipWithEmployee | null> {
-  const rows = await query<SlipWithEmployee & RowDataPacket>(
-    `SELECT s.*, e.name, e.email, e.designation, e.dob
-     FROM salary_slips s
-     JOIN employees e ON e.employee_id = s.employee_id
-     WHERE s.id = :id`,
-    { id: slipId }
-  );
-  return rows[0] ?? null;
+  const { data, error } = await getSupabase()
+    .from("salary_slips")
+    .select("*, employees(name, email, designation, dob)")
+    .eq("id", slipId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data ? flattenSlip(data as unknown as SlipJoinRow) : null;
 }
 
 export async function listSlips(monthYear?: string): Promise<SlipWithEmployee[]> {
-  if (monthYear) {
-    return query<SlipWithEmployee & RowDataPacket>(
-      `SELECT s.*, e.name, e.email, e.designation
-       FROM salary_slips s
-       JOIN employees e ON e.employee_id = s.employee_id
-       WHERE s.month_year = :month
-       ORDER BY e.name ASC`,
-      { month: monthYear }
-    );
-  }
-  return query<SlipWithEmployee & RowDataPacket>(
-    `SELECT s.*, e.name, e.email, e.designation
-     FROM salary_slips s
-     JOIN employees e ON e.employee_id = s.employee_id
-     ORDER BY s.month_year DESC, e.name ASC`
+  let q = getSupabase()
+    .from("salary_slips")
+    .select("*, employees(name, email, designation)");
+  if (monthYear) q = q.eq("month_year", monthYear);
+  const { data, error } = await q;
+  if (error) throw new Error(error.message);
+
+  const rows = ((data ?? []) as unknown as SlipJoinRow[]).map(flattenSlip);
+  // PostgREST can't ORDER BY an embedded column on parent rows, so do it here.
+  // Filtered: by employee name. Unfiltered: newest month first, then name.
+  rows.sort((a, b) =>
+    monthYear
+      ? a.name.localeCompare(b.name)
+      : b.month_year.localeCompare(a.month_year) || a.name.localeCompare(b.name)
   );
+  return rows;
 }
 
 export async function listSlipMonths(): Promise<string[]> {
-  const rows = await query<RowDataPacket & { month_year: string }>(
-    `SELECT DISTINCT month_year FROM salary_slips ORDER BY month_year DESC`
-  );
-  return rows.map((r) => r.month_year);
+  const { data, error } = await getSupabase()
+    .from("salary_slips")
+    .select("month_year")
+    .order("month_year", { ascending: false });
+  if (error) throw new Error(error.message);
+
+  // PostgREST has no DISTINCT; dedupe in JS, preserving the DESC order.
+  const seen = new Set<string>();
+  const months: string[] = [];
+  for (const r of (data ?? []) as { month_year: string }[]) {
+    if (!seen.has(r.month_year)) {
+      seen.add(r.month_year);
+      months.push(r.month_year);
+    }
+  }
+  return months;
 }
 
 export interface SlipStats {
@@ -151,17 +185,22 @@ export interface SlipStats {
 }
 
 export async function getSlipStats(): Promise<SlipStats> {
-  const rows = await query<RowDataPacket & { email_status: EmailStatus; c: number }>(
-    `SELECT email_status, COUNT(*) AS c FROM salary_slips GROUP BY email_status`
-  );
-  const stats: SlipStats = { total: 0, sent: 0, failed: 0, pending: 0 };
-  for (const row of rows) {
-    stats.total += row.c;
-    if (row.email_status === "sent") stats.sent += row.c;
-    else if (row.email_status === "failed") stats.failed += row.c;
-    else stats.pending += row.c;
-  }
-  return stats;
+  const sb = getSupabase();
+  // No GROUP BY in PostgREST: run head-only count queries (no rows transferred).
+  const countWhere = async (status?: EmailStatus): Promise<number> => {
+    let q = sb.from("salary_slips").select("*", { count: "exact", head: true });
+    if (status) q = q.eq("email_status", status);
+    const { count, error } = await q;
+    if (error) throw new Error(error.message);
+    return count ?? 0;
+  };
+  const [total, sent, failed] = await Promise.all([
+    countWhere(),
+    countWhere("sent"),
+    countWhere("failed"),
+  ]);
+  // Everything that isn't sent/failed counts as pending (queued/sending/pending).
+  return { total, sent, failed, pending: total - sent - failed };
 }
 
 export async function setSlipStatus(
@@ -169,18 +208,18 @@ export async function setSlipStatus(
   status: EmailStatus,
   extra: { error?: string | null; jobId?: string | null; sent?: boolean } = {}
 ): Promise<void> {
-  await execute(
-    `UPDATE salary_slips
-     SET email_status = :status,
-         email_error = :error,
-         job_id = COALESCE(:jobId, job_id),
-         sent_at = ${extra.sent ? "CURRENT_TIMESTAMP" : "sent_at"}
-     WHERE id = :id`,
-    {
-      id: slipId,
-      status,
-      error: extra.error ?? null,
-      jobId: extra.jobId ?? null,
-    }
-  );
+  const patch: Record<string, unknown> = {
+    email_status: status,
+    email_error: extra.error ?? null,
+  };
+  // COALESCE(:jobId, job_id): only overwrite job_id when a new one is supplied.
+  if (extra.jobId != null) patch.job_id = extra.jobId;
+  // sent_at = CURRENT_TIMESTAMP only when marking sent; otherwise leave it.
+  if (extra.sent) patch.sent_at = new Date().toISOString();
+
+  const { error } = await getSupabase()
+    .from("salary_slips")
+    .update(patch)
+    .eq("id", slipId);
+  if (error) throw new Error(error.message);
 }

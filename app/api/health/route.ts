@@ -1,5 +1,5 @@
 import { requireApiSession } from "@/lib/auth";
-import { query } from "@/lib/db";
+import { getSupabase } from "@/lib/supabase";
 import { getSalaryQueue } from "@/lib/queue";
 import { env } from "@/lib/env";
 
@@ -9,26 +9,22 @@ export async function GET() {
 
   const health = {
     db: false,
-    redis: false,
+    queue: false,
     smtpConfigured: Boolean(env.smtp.host && env.smtp.user),
   };
 
   try {
-    await query("SELECT 1");
+    const { error } = await getSupabase()
+      .from("employees")
+      .select("employee_id", { count: "exact", head: true });
+    if (error) throw error;
     health.db = true;
   } catch {
     /* db down */
   }
 
-  try {
-    const client = (await getSalaryQueue().client) as unknown as {
-      ping(): Promise<string>;
-    };
-    const pong = await client.ping();
-    health.redis = pong === "PONG";
-  } catch {
-    /* redis down */
-  }
+  // In-process queue: available whenever the server is running.
+  health.queue = Boolean(getSalaryQueue());
 
-  return Response.json(health);
+  return Response.json({ ...health, ...getSalaryQueue().stats() });
 }
