@@ -1,8 +1,13 @@
 import { z } from "zod";
 import { requireApiSession } from "@/lib/auth";
-import { getEmployeesByIds, upsertSlip, setSlipStatus } from "@/lib/repo";
+import { getEmployeesByIds, upsertSlip } from "@/lib/repo";
 import { computeNetSalary } from "@/lib/salary";
-import { getSalaryQueue } from "@/lib/queue";
+import { sendSlips } from "@/lib/process-slip";
+
+// PDF generation (headless Chromium) is slow; give the function room. On Vercel
+// Hobby the ceiling is 60s — split very large payroll runs into smaller batches.
+export const runtime = "nodejs";
+export const maxDuration = 60;
 
 const RowSchema = z.object({
   employee_id: z.string().min(1),
@@ -30,9 +35,15 @@ export async function POST(request: Request) {
   const ids = [...new Set(parsed.rows.map((r) => r.employee_id))];
   const employees = await getEmployeesByIds(ids);
 
-  const queue = getSalaryQueue();
-  const results: { employee_id: string; month_year: string; status: string; error?: string }[] = [];
-  let queued = 0;
+  type Result = {
+    employee_id: string;
+    month_year: string;
+    status: "sent" | "failed" | "skipped" | "error";
+    error?: string;
+  };
+  const results: Result[] = [];
+  // Persist every valid slip first, collecting the ids to process.
+  const toSend: { slipId: number; row: (typeof parsed.rows)[number] }[] = [];
 
   for (const row of parsed.rows) {
     if (!employees.has(row.employee_id)) {
@@ -44,11 +55,10 @@ export async function POST(request: Request) {
       });
       continue;
     }
-
     const net = computeNetSalary(row);
-    let slipId: number;
     try {
-      slipId = await upsertSlip({ ...row, net_salary: net });
+      const slipId = await upsertSlip({ ...row, net_salary: net });
+      toSend.push({ slipId, row });
     } catch (e) {
       results.push({
         employee_id: row.employee_id,
@@ -56,16 +66,28 @@ export async function POST(request: Request) {
         status: "error",
         error: e instanceof Error ? e.message : "DB error",
       });
-      continue;
     }
-
-    // No fixed jobId: re-dispatching a month should always enqueue a fresh job
-    // (e.g. to retry a previously failed slip).
-    const job = await queue.add("send-slip", { slipId });
-    await setSlipStatus(slipId, "queued", { jobId: String(job.id) });
-    queued += 1;
-    results.push({ employee_id: row.employee_id, month_year: row.month_year, status: "queued" });
   }
 
-  return Response.json({ ok: true, queued, total: parsed.rows.length, results });
+  // Generate + email the PDFs inline (no background worker on serverless).
+  const sentMap = await sendSlips(toSend.map((s) => s.slipId));
+  for (const { slipId, row } of toSend) {
+    const r = sentMap.get(slipId);
+    results.push({
+      employee_id: row.employee_id,
+      month_year: row.month_year,
+      status: r?.ok ? "sent" : "failed",
+      error: r?.ok ? undefined : r?.error,
+    });
+  }
+
+  const sent = results.filter((r) => r.status === "sent").length;
+  const failed = results.filter((r) => r.status === "failed").length;
+  return Response.json({
+    ok: true,
+    sent,
+    failed,
+    total: parsed.rows.length,
+    results,
+  });
 }

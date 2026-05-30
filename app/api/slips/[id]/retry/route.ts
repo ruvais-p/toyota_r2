@@ -1,6 +1,10 @@
 import { requireApiSession } from "@/lib/auth";
-import { getSlipWithEmployee, setSlipStatus } from "@/lib/repo";
-import { getSalaryQueue } from "@/lib/queue";
+import { getSlipWithEmployee } from "@/lib/repo";
+import { sendSlipSafely } from "@/lib/process-slip";
+
+// Generating + emailing the PDF runs inline (no background worker on serverless).
+export const runtime = "nodejs";
+export const maxDuration = 60;
 
 export async function POST(
   _request: Request,
@@ -20,7 +24,9 @@ export async function POST(
     return Response.json({ error: "Slip not found" }, { status: 404 });
   }
 
-  const job = await getSalaryQueue().add("send-slip", { slipId });
-  await setSlipStatus(slipId, "queued", { jobId: String(job.id), error: null });
+  const r = await sendSlipSafely(slipId);
+  if (!r.ok) {
+    return Response.json({ ok: false, error: r.error }, { status: 502 });
+  }
   return Response.json({ ok: true });
 }

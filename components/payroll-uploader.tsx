@@ -112,7 +112,13 @@ export function PayrollUploader() {
         toast.error(data.error ?? "Dispatch failed");
         return;
       }
-      toast.success(`Queued ${data.queued} salary slip(s) for emailing.`);
+      if (data.failed > 0) {
+        toast.warning(
+          `Emailed ${data.sent} slip(s); ${data.failed} failed. Check the slips list to retry.`
+        );
+      } else {
+        toast.success(`Emailed ${data.sent} salary slip(s).`);
+      }
       router.push("/slips");
       router.refresh();
     } catch {
@@ -192,8 +198,8 @@ export function PayrollUploader() {
                     {summary.months.length > 0 && (
                       <> for {summary.months.map(formatMonthYear).join(", ")}</>
                     )}{" "}
-                    and queue them to be emailed. Existing slips for the same month
-                    will be regenerated.
+                    and email them now. Existing slips for the same month will be
+                    regenerated.
                   </DialogDescription>
                 </DialogHeader>
                 <DialogFooter>

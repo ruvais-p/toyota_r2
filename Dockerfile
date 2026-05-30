@@ -18,17 +18,10 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 
-# Build the standalone Next.js output.
+# Build the standalone Next.js output. muhammara (native PDF lib) is pulled into
+# .next/standalone via `outputFileTracingIncludes` in next.config.
 COPY . .
 RUN npm run build
-
-# muhammara (PDF encryption) is loaded via a runtime import (turbopackIgnore),
-# so Next's output tracer never sees it and standalone omits it. Install it and
-# its production dependency closure into an isolated tree we copy in at runtime.
-RUN MUHAMMARA_VERSION="$(node -p "require('/app/node_modules/muhammara/package.json').version")" \
- && mkdir -p /muhammara && cd /muhammara \
- && npm init -y >/dev/null \
- && npm install --omit=dev "muhammara@${MUHAMMARA_VERSION}"
 
 # ---- Stage 2: runtime -----------------------------------------------------
 FROM node:22-bookworm-slim AS runner
@@ -53,8 +46,6 @@ ENV NODE_ENV=production \
 COPY --from=builder --chown=node:node /app/.next/standalone ./
 COPY --from=builder --chown=node:node /app/.next/static ./.next/static
 COPY --from=builder --chown=node:node /app/public ./public
-# Native PDF module that standalone can't trace (see builder stage).
-COPY --from=builder --chown=node:node /muhammara/node_modules ./node_modules
 
 # Run as the unprivileged user the base image ships with.
 USER node

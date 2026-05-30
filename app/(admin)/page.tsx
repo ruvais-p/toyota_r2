@@ -10,7 +10,6 @@ import {
   XCircle,
 } from "lucide-react";
 import { countEmployees, getSlipStats } from "@/lib/repo";
-import { getSalaryQueue } from "@/lib/queue";
 import { env } from "@/lib/env";
 import {
   Card,
@@ -26,15 +25,12 @@ export const dynamic = "force-dynamic";
 async function getHealth() {
   const health = {
     db: false,
-    queue: false,
     smtp: Boolean(env.smtp.host && env.smtp.user),
   };
   try {
     await countEmployees();
     health.db = true;
   } catch {}
-  // In-process queue: available whenever the server is running.
-  health.queue = Boolean(getSalaryQueue());
   return health;
 }
 
@@ -164,7 +160,6 @@ export default async function DashboardPage() {
           </CardHeader>
           <CardContent className="space-y-3">
             <StatusRow ok={health.db} label="Supabase (Postgres)" />
-            <StatusRow ok={health.queue} label="Email queue (in-process)" />
             <StatusRow
               ok={health.smtp}
               label="SMTP configured"

@@ -7,9 +7,12 @@ import { env } from "./env";
 import { renderSlipHtml, type SlipTemplateData } from "./slip-template";
 
 /**
- * muhammara is a native (node-pre-gyp) module. Turbopack cannot statically
- * analyze its package config, so we load it through a bundler-ignored dynamic
- * import at runtime. It stays listed in `serverExternalPackages` as well.
+ * muhammara is a native (node-pre-gyp) module. Turbopack crashes trying to
+ * parse its package.json (missing `napi_versions`), so we load it through a
+ * bundler-ignored dynamic import at runtime. Because the tracer can't see this
+ * import, muhammara + its deps are force-included in the deployed bundle via
+ * `outputFileTracingIncludes` in next.config (and copied explicitly in the
+ * Dockerfile). It also stays in `serverExternalPackages`.
  */
 type Muhammara = typeof import("muhammara");
 let muhammaraPromise: Promise<Muhammara> | null = null;
@@ -22,7 +25,7 @@ async function getMuhammara(): Promise<Muhammara> {
   return muhammaraPromise;
 }
 
-/** Common Chrome/Chromium locations to probe when no env path is set. */
+/** Common system Chrome/Chromium locations (local dev, Docker image). */
 const CHROME_CANDIDATES = [
   "/usr/bin/google-chrome-stable",
   "/usr/bin/google-chrome",
@@ -32,17 +35,12 @@ const CHROME_CANDIDATES = [
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
 ];
 
-function resolveChromePath(): string {
+/** A usable system Chrome path, or null if none is present (e.g. serverless). */
+function resolveLocalChrome(): string | null {
   if (env.puppeteerExecutablePath && fs.existsSync(env.puppeteerExecutablePath)) {
     return env.puppeteerExecutablePath;
   }
-  const found = CHROME_CANDIDATES.find((p) => fs.existsSync(p));
-  if (!found) {
-    throw new Error(
-      "No Chrome/Chromium binary found. Set PUPPETEER_EXECUTABLE_PATH in your environment."
-    );
-  }
-  return found;
+  return CHROME_CANDIDATES.find((p) => fs.existsSync(p)) ?? null;
 }
 
 const globalForBrowser = globalThis as unknown as { __pdfBrowser?: Browser };
@@ -51,13 +49,33 @@ const globalForBrowser = globalThis as unknown as { __pdfBrowser?: Browser };
 async function getBrowser(): Promise<Browser> {
   const existing = globalForBrowser.__pdfBrowser;
   if (existing && existing.connected) return existing;
-  const browser = await puppeteer.launch({
-    executablePath: resolveChromePath(),
-    headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
-  });
+  const browser = await launchBrowser();
   globalForBrowser.__pdfBrowser = browser;
   return browser;
+}
+
+/**
+ * Launch Chromium. Prefer a system binary (local dev / the Docker image). On
+ * serverless platforms with no system Chrome (Vercel, AWS Lambda), fall back to
+ * @sparticuz/chromium, a Chromium build packaged for those runtimes.
+ */
+async function launchBrowser(): Promise<Browser> {
+  const localPath = resolveLocalChrome();
+  if (localPath) {
+    return puppeteer.launch({
+      executablePath: localPath,
+      headless: true,
+      args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+    });
+  }
+  const chromium = (await import("@sparticuz/chromium")).default;
+  // HTML-to-PDF needs no GPU; skip the graphics stack for a faster, lighter cold start.
+  chromium.setGraphicsMode = false;
+  return puppeteer.launch({
+    args: chromium.args,
+    executablePath: await chromium.executablePath(),
+    headless: true,
+  });
 }
 
 export async function closeBrowser(): Promise<void> {

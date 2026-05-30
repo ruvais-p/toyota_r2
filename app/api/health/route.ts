@@ -1,6 +1,5 @@
 import { requireApiSession } from "@/lib/auth";
 import { getSupabase } from "@/lib/supabase";
-import { getSalaryQueue } from "@/lib/queue";
 import { env } from "@/lib/env";
 
 export async function GET() {
@@ -9,7 +8,6 @@ export async function GET() {
 
   const health = {
     db: false,
-    queue: false,
     smtpConfigured: Boolean(env.smtp.host && env.smtp.user),
   };
 
@@ -23,8 +21,5 @@ export async function GET() {
     /* db down */
   }
 
-  // In-process queue: available whenever the server is running.
-  health.queue = Boolean(getSalaryQueue());
-
-  return Response.json({ ...health, ...getSalaryQueue().stats() });
+  return Response.json(health);
 }
