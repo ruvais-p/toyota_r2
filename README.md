@@ -18,6 +18,8 @@ PostgreSQL), **puppeteer‑core + @sparticuz/chromium** (PDF rendering),
 
 ---
 
+![Payroll Processing](./docs/images/payroll-processing.png)
+
 ## Table of contents
 
 - [Features](#features)
