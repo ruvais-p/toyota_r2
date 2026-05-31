@@ -19,6 +19,12 @@ PostgreSQL), **puppeteer‑core + @sparticuz/chromium** (PDF rendering),
 ---
 
 ![Payroll Processing](https://github.com/ruvais-p/toyota_r2/blob/main/images/Screenshot%20from%202026-05-31%2010-40-41.png?raw=true)
+![Payroll Processing](https://github.com/ruvais-p/toyota_r2/blob/main/images/Screenshot%20from%202026-05-31%2010-40-48.png?raw=true)
+![Payroll Processing](https://github.com/ruvais-p/toyota_r2/blob/main/images/Screenshot%20from%202026-05-31%2010-41-31.png?raw=true)
+![Payroll Processing](https://github.com/ruvais-p/toyota_r2/blob/main/images/Screenshot%20from%202026-05-31%2010-41-36.png?raw=true)
+![Payroll Processing](https://github.com/ruvais-p/toyota_r2/blob/main/images/Screenshot%20from%202026-05-31%2010-41-41.png?raw=true)
+![Payroll Processing](https://github.com/ruvais-p/toyota_r2/blob/main/images/Screenshot%20from%202026-05-31%2010-41-44.png?raw=true)
+![Payroll Processing](https://github.com/ruvais-p/toyota_r2/blob/main/images/Screenshot%20from%202026-05-31%2010-41-49.png?raw=true)
 
 ## Table of contents
 
